@@ -1,7 +1,7 @@
 ---
 scope_type: phase
 related_phases: [3]
-status: pending
+status: decided
 date: 2026-07-10
 scope_description: "Backend foundation for video upload and processing: background queue technology, object storage usage (buckets/keys, presigned URLs), large-file upload strategy, video processing worker (ffmpeg/ffprobe), streaming/download delivery, unique video identifiers, and status-lifecycle/failure handling."
 ---
@@ -44,7 +44,9 @@ _Subprojects in scope:_
 
 **Recommendation:** **Option A (BullMQ + Redis via `@nestjs/bullmq`)** — the retry/backoff semantics needed for TD-07 (failure handling) are native BullMQ features requiring zero custom code, the NestJS integration is decorator-based and idiomatic with the project's existing DI conventions, and Redis is a single, well-documented container — a modest addition to `compose.yaml` compared to RabbitMQ's operational surface. pg-boss avoids new infra but trades away NestJS-native ergonomics and mature tooling for a single-consumer, single-job-type workload where that trade isn't justified.
 
-**Decision:** _[pending]_
+**Decision:** A (BullMQ + Redis via `@nestjs/bullmq`)
+
+**Libraries:** @nestjs/bullmq, bullmq
 
 ---
 
@@ -80,7 +82,9 @@ _Subprojects in scope:_
 
 **Recommendation:** **Client: Option A (AWS SDK v3)** — directly honors the project's own "MinIO now, S3 in production" plan with zero client-code migration cost, and `lib-storage`'s `Upload` class plus `s3-request-presigner` cover every storage need (presigned upload/download, multipart) documented for this phase. **Bucket organization: Option A (single bucket, prefixed keys)** — no differentiated-policy requirement exists yet in Phase 03; a second bucket can be introduced later without touching key-generation logic (keys are already namespaced by video ID).
 
-**Decision:** _[pending]_
+**Decision:** A (AWS SDK v3, client) + A (single bucket, prefixed keys, organization)
+
+**Libraries:** @aws-sdk/client-s3, @aws-sdk/s3-request-presigner, @aws-sdk/lib-storage
 
 ---
 
@@ -111,7 +115,11 @@ _Subprojects in scope:_
 
 **Recommendation:** **Option B (Presigned multipart upload, API-orchestrated)** — the only option that both satisfies the 10GB (and beyond) requirement and genuinely keeps the API out of the byte-transfer path. Flow: `POST /videos` creates the draft video row (`status: rascunho`) and a storage multipart upload, returning `videoId` + `uploadId` + presigned part URLs; the client PUTs parts directly to MinIO; `POST /videos/:id/complete-upload` completes the multipart upload and enqueues the processing job (TD-01), moving `status` to `processando`.
 
-**Decision:** _[pending]_
+**Decision:** B (Presigned multipart upload, API-orchestrated)
+
+**Note:** `title` is a **required** field on the `POST /videos` draft-creation payload (resolved 2026-07-12, ex-AMB-1) — the draft cannot be created without one. Fase 04 still owns subsequent title/description/category editing; this only fixes the initial value at upload start.
+
+**Libraries:** —
 
 ---
 
@@ -142,7 +150,9 @@ _Subprojects in scope:_
 
 **Recommendation:** **Option A (reuse the UUID primary key)** — the project's precedent for a *separate* public handle (the `Channel.nickname` column, distinct from `Channel.id`) exists specifically because channels need a memorable, user-chosen public identity. No such requirement exists for videos in this phase's capability list. Reusing the existing UUID costs nothing and defers a short-URL feature to a later phase if the product ever asks for one.
 
-**Decision:** _[pending]_
+**Decision:** A (reuse the UUID primary key)
+
+**Libraries:** —
 
 ---
 
@@ -173,7 +183,9 @@ _Subprojects in scope:_
 
 **Recommendation:** **Option A (separate NestJS entrypoint/container using `fluent-ffmpeg`)** — the only option matching the architecture diagram's explicit separate Video Worker container while reusing 100% of the existing NestJS conventions (entities, config, storage client). `fluent-ffmpeg`'s `ffprobe()` and `screenshots()` cover the metadata-extraction and thumbnail-generation capabilities directly, confirmed against current documentation.
 
-**Decision:** _[pending]_
+**Decision:** A (separate NestJS entrypoint/container using `fluent-ffmpeg`)
+
+**Libraries:** fluent-ffmpeg
 
 ---
 
@@ -204,7 +216,11 @@ _Subprojects in scope:_
 
 **Recommendation:** **Option B (Presigned GET URL)** — reuses S3/MinIO's already-correct `Range`/`206` implementation instead of re-implementing it, keeps the API stateless and out of the bandwidth path for both streaming and downloading, and is symmetric with the upload decision (TD-03): the API only ever brokers short-lived signed URLs, never the bytes themselves.
 
-**Decision:** _[pending]_
+**Decision:** B (Presigned GET URL)
+
+**Note:** Streaming/download endpoints are **public** (`@Public()`, no JWT required) for videos with `status: pronto`, starting this phase (resolved 2026-07-12, ex-AMB-2) — ahead of Fase 05's "Acesso anônimo à visualização de vídeos" capability, to match the product's core anonymous-viewing vision and avoid reworking the auth boundary later.
+
+**Libraries:** —
 
 ---
 
@@ -235,7 +251,9 @@ _Subprojects in scope:_
 
 **Recommendation:** **Option A (BullMQ automatic retries, `erro` after exhaustion)** — a thin, standard use of the queue technology already chosen in TD-01, absorbing transient failures without any bespoke retry code, while still surfacing a genuine `erro` state (with the last failure reason) once retries are exhausted.
 
-**Decision:** _[pending]_
+**Decision:** A (BullMQ automatic retries, `erro` after exhaustion)
+
+**Libraries:** —
 
 ---
 
@@ -266,7 +284,9 @@ _Subprojects in scope:_
 
 **Recommendation:** **Option A (real Redis + BullMQ, `waitUntilFinished`)** — the only option consistent with this project's already-established, explicit preference for real infrastructure in integration tests, and the only one that actually exercises TD-07's retry/backoff behavior. `QueueEvents.waitUntilFinished()` is a clean, documented, non-polling primitive for this — not a fragile ad hoc polling loop.
 
-**Decision:** _[pending]_
+**Decision:** A (real Redis + BullMQ, `waitUntilFinished`)
+
+**Libraries:** —
 
 ---
 

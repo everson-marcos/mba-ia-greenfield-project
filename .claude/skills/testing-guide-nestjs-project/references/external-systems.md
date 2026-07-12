@@ -37,77 +37,80 @@ How each external system is handled in tests. These strategies were confirmed wi
 
 ---
 
-## Object Storage — Local Filesystem
+## Object Storage — Real MinIO (Docker)
 
-**Strategy:** Local filesystem storage in development and tests. S3 in production.
+**Strategy:** Real MinIO (S3-compatible) via Docker in both development and tests. Real AWS S3 in production — same client code, only `endpoint`/credentials change (see `docs/decisions/technical-decisions-phase-03-videos.md` TD-02).
 
 **Approach:**
-- The storage layer should use an abstraction (e.g., `StorageService` interface) that allows switching between local filesystem and S3
-- In tests, use the local filesystem adapter — no mocking needed
-- Use a temporary directory for test uploads: `os.tmpdir()` or a dedicated `test-uploads/` directory
-- Clean up test files in `afterAll`
+- Client: `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` + `@aws-sdk/lib-storage` (AWS SDK v3 — true S3-protocol client, works against MinIO via `endpoint` + `forcePathStyle: true`)
+- In tests, hit the real `minio` Compose service — no mocking, no local-filesystem fallback. Consistent with the project's "don't mock what you can run for real in Compose" policy.
+- Use a dedicated test bucket (or a `test/` key prefix within the phase's single bucket) and clean up test objects in `afterAll`/`afterEach`
 
 **Setup pattern:**
 ```typescript
 // In test module setup
-{
-  provide: 'STORAGE_CONFIG',
-  useValue: {
-    driver: 'local',
-    basePath: path.join(os.tmpdir(), 'streamtube-test-uploads'),
+const s3Client = new S3Client({
+  endpoint: process.env.STORAGE_ENDPOINT ?? 'http://minio:9000',
+  forcePathStyle: true,
+  region: 'us-east-1',
+  credentials: {
+    accessKeyId: process.env.STORAGE_ACCESS_KEY ?? 'minioadmin',
+    secretAccessKey: process.env.STORAGE_SECRET_KEY ?? 'minioadmin',
   },
-}
+});
 ```
 
 **Integration test:**
 ```typescript
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 describe('StorageService (integration)', () => {
-  const testDir = path.join(os.tmpdir(), 'streamtube-test-uploads');
+  const testKey = `test/${crypto.randomUUID()}.txt`;
 
-  afterAll(() => {
-    fs.rmSync(testDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await s3Client.send(new DeleteObjectCommand({ Bucket: bucket, Key: testKey }));
   });
 
-  it('should upload and retrieve a file', async () => {
-    const buffer = Buffer.from('test content');
-    const key = await storageService.upload(buffer, 'test.txt');
+  it('should upload and retrieve a file from real MinIO', async () => {
+    await s3Client.send(
+      new PutObjectCommand({ Bucket: bucket, Key: testKey, Body: Buffer.from('test content') }),
+    );
 
-    const retrieved = await storageService.get(key);
-    expect(retrieved.toString()).toBe('test content');
+    const { Body } = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: testKey }));
+    expect(await Body.transformToString()).toBe('test content');
   });
 });
 ```
 
 ---
 
-## Message Queue — Real (Docker)
+## Message Queue — Real BullMQ + Redis (Docker)
 
-**Strategy:** Real message broker in Docker. The specific technology is TBD per the architecture diagram (likely BullMQ with Redis or RabbitMQ).
+**Strategy:** Real BullMQ backed by a real Redis instance via Docker, in both development and tests (see `docs/decisions/technical-decisions-phase-03-videos.md` TD-01, TD-08). No mocked queue, no fake in-memory substitute — retry/backoff behavior (TD-07) is only meaningfully tested against the real queue.
 
-**When the queue technology is chosen, configure:**
-- A queue broker service in `compose.yaml` (e.g., Redis for BullMQ, RabbitMQ for AMQP)
-- Test isolation: use dedicated test queues or clean queues between tests
+**Configure:**
+- A `redis` service in `compose.yaml` (Compose service name — never `localhost` inside containers, per `CLAUDE.md`'s Docker Networking rule)
+- `@nestjs/bullmq` + `bullmq` — see `docs/phases/phase-03-videos/library-refs.md` for setup snippets
+- Test isolation: use a dedicated test queue name (or a per-test-run prefix) and clean queues between tests
 - For publisher tests: assert the job is enqueued with correct data
-- For consumer tests: submit a job and assert the processing outcome
+- For consumer tests: submit a job and await real completion via `QueueEvents.waitUntilFinished(job)` — not polling
 
-**Setup pattern (BullMQ example):**
+**Setup pattern:**
 ```typescript
 // In test module
-BullModule.forRoot({
-  connection: {
-    host: process.env.REDIS_HOST ?? 'localhost',
-    port: Number(process.env.REDIS_PORT ?? 6379),
-  },
+BullModule.forRootAsync({
+  useFactory: () => ({
+    connection: {
+      host: process.env.REDIS_HOST ?? 'redis',
+      port: Number(process.env.REDIS_PORT ?? 6379),
+    },
+  }),
 }),
 BullModule.registerQueue({ name: 'video-processing' }),
 ```
 
 ```typescript
-describe('VideoService (integration - queue)', () => {
+describe('VideoProcessing (integration - queue)', () => {
   it('should enqueue a processing job on upload', async () => {
     await videoService.upload(videoData);
 
@@ -117,6 +120,14 @@ describe('VideoService (integration - queue)', () => {
     expect(jobs[0].data).toEqual(
       expect.objectContaining({ videoId: expect.any(String) }),
     );
+  });
+
+  it('should process the job and update video status to pronto', async () => {
+    const job = await queue.add('process-video', { videoId });
+    await job.waitUntilFinished(queueEvents); // real worker, real ffmpeg, bounded by a small fixture video
+
+    const video = await videoRepository.findOneBy({ id: videoId });
+    expect(video.status).toBe('pronto');
   });
 });
 ```
