@@ -32,7 +32,7 @@ sources_mtime:
 
 Distilled Context7 docs for the libraries newly decided in this phase (TD-01, TD-02, TD-05). Only the surfaces relevant to this phase's usage are kept — full docs live upstream.
 
-## @nestjs/bullmq + bullmq (TD-01)
+### @nestjs/bullmq
 
 **Module setup, injecting `ConfigService`** (matches the project's `registerAs`/`ConfigType` convention — pass connection options via `forRootAsync`):
 
@@ -74,7 +74,6 @@ export class VideoProcessor extends WorkerHost {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job, err: Error) {
-    // only fires after all `attempts` are exhausted is NOT true —
     // 'failed' fires per-attempt; check job.attemptsMade === job.opts.attempts
     // to know retries are exhausted (TD-07).
   }
@@ -87,21 +86,29 @@ export class VideoProcessor extends WorkerHost {
 await this.videoQueue.add('process-video', { videoId });
 ```
 
+**Constants note:** `@nestjs/bullmq` uses distinct metadata keys (`PROCESSOR_METADATA`, `WORKER_METADATA`, `ON_WORKER_EVENT_METADATA`) from the legacy `@nestjs/bull` package — do not mix imports from `@nestjs/bull` into this module; import everything from `@nestjs/bullmq`.
+
+### bullmq
+
 **Awaiting completion in integration tests (TD-08)** — use `QueueEvents.waitUntilFinished(job)`, not polling:
 
 ```typescript
+import { QueueEvents } from 'bullmq';
+
 const queueEvents = new QueueEvents('video-processing', { connection });
 const job = await videoQueue.add('process-video', { videoId });
 await job.waitUntilFinished(queueEvents); // resolves when the job completes or throws on failure
 ```
 
-**Constants note:** `@nestjs/bullmq` uses distinct metadata keys (`PROCESSOR_METADATA`, `WORKER_METADATA`, `ON_WORKER_EVENT_METADATA`) from the legacy `@nestjs/bull` package — do not mix imports from `@nestjs/bull` into this module; import everything from `@nestjs/bullmq`.
+`bullmq` is the underlying engine `@nestjs/bullmq` wraps — `Job`, `Queue`, `Worker`, `QueueEvents` types and the `attempts`/`backoff` job-option shapes all come from this package directly (re-exported/used through `@nestjs/bullmq` for DI, but `QueueEvents` for test-side awaiting is typically imported straight from `bullmq`).
 
-## @aws-sdk/client-s3 + @aws-sdk/s3-request-presigner + @aws-sdk/lib-storage (TD-02, TD-03, TD-06)
+### @aws-sdk/client-s3
 
 **Client setup for MinIO** (custom endpoint + path-style — required for MinIO, not needed for real AWS S3 in production):
 
 ```typescript
+import { S3Client } from '@aws-sdk/client-s3';
+
 const s3Client = new S3Client({
   endpoint: config.endpoint,       // e.g. http://minio:9000 — Compose service name
   forcePathStyle: true,            // required for MinIO; omit/false for real AWS S3
@@ -116,26 +123,19 @@ const s3Client = new S3Client({
 **Multipart upload orchestration (TD-03)** — 3-step handshake the API performs:
 
 1. `CreateMultipartUploadCommand({ Bucket, Key })` → returns `UploadId`.
-2. Per part: sign a `UploadPartCommand({ Bucket, Key, UploadId, PartNumber })` via `getSignedUrl()` and hand the URL to the client — the API never sees the bytes.
+2. Per part: sign a `UploadPartCommand({ Bucket, Key, UploadId, PartNumber })` via `getSignedUrl()` (from `@aws-sdk/s3-request-presigner`) and hand the URL to the client — the API never sees the bytes.
 3. `CompleteMultipartUploadCommand({ Bucket, Key, UploadId, MultipartUpload: { Parts: [{ ETag, PartNumber }, ...] } })` — client reports back each part's `ETag` from its PUT response headers, API completes the upload.
 
 ```typescript
 import {
-  S3Client,
   CreateMultipartUploadCommand,
   UploadPartCommand,
   CompleteMultipartUploadCommand,
+  GetObjectCommand,
 } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 const { UploadId } = await s3Client.send(
   new CreateMultipartUploadCommand({ Bucket, Key }),
-);
-
-const partUrl = await getSignedUrl(
-  s3Client,
-  new UploadPartCommand({ Bucket, Key, UploadId, PartNumber: 1 }),
-  { expiresIn: 3600 },
 );
 
 await s3Client.send(
@@ -146,12 +146,23 @@ await s3Client.send(
 );
 ```
 
-**Presigned GET (TD-06, streaming/download)**:
+**Presigned GET (TD-06, streaming/download)** uses `GetObjectCommand` from this package together with `getSignedUrl()` from `@aws-sdk/s3-request-presigner` — see that section below.
+
+### @aws-sdk/s3-request-presigner
+
+**`getSignedUrl()`** signs any `client-s3` command into a time-limited URL — used for both `UploadPartCommand` (upload direction, TD-03) and `GetObjectCommand` (download direction, TD-06):
 
 ```typescript
-import { GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { UploadPartCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
-const url = await getSignedUrl(
+const partUrl = await getSignedUrl(
+  s3Client,
+  new UploadPartCommand({ Bucket, Key, UploadId, PartNumber: 1 }),
+  { expiresIn: 3600 },
+);
+
+const getUrl = await getSignedUrl(
   s3Client,
   new GetObjectCommand({ Bucket, Key }),
   { expiresIn: 3600 },
@@ -160,7 +171,11 @@ const url = await getSignedUrl(
 // no manual Range parsing needed in the NestJS controller.
 ```
 
-**Alternative for whole-file uploads** (not this phase's main path, but useful for e.g. thumbnail upload from the worker, which is small and doesn't need multipart): `@aws-sdk/lib-storage`'s `Upload` class handles chunking automatically:
+For the download endpoint, pass `ResponseContentDisposition: 'attachment'` on the `GetObjectCommand` to force a download instead of inline playback.
+
+### @aws-sdk/lib-storage
+
+**`Upload` class** — not this phase's main upload path (that's the client-orchestrated multipart handshake above, per TD-03), but useful for whole-file uploads the worker performs itself, e.g. uploading the generated thumbnail (small, no multipart handshake needed):
 
 ```typescript
 import { Upload } from '@aws-sdk/lib-storage';
@@ -172,7 +187,7 @@ const upload = new Upload({
 await upload.done();
 ```
 
-## fluent-ffmpeg (TD-05)
+### fluent-ffmpeg
 
 **Binary path** — `ffmpeg`/`ffprobe` must be installed in the worker's container image (not present in `node:25.6.0-slim` by default; add via `apt install ffmpeg`, which provides both binaries). If not on `PATH`, set explicitly at startup:
 
