@@ -23,7 +23,7 @@ See `docs/diagrams/software-arch.mermaid` for the full diagram. Key containers:
 - **Video Worker** (FFmpeg) → consumes jobs from queue, processes videos, updates DB and storage
 - **Database** (PostgreSQL) → users, channels, videos, comments, likes
 - **Object Storage** (S3/MinIO) → video files and thumbnails
-- **Message Queue** (TBD) → video processing job queue
+- **Message Queue** (BullMQ + Redis) → video processing job queue
 - **Email Service** (SMTP) → account confirmation and password recovery
 
 ## Docker Networking
@@ -36,6 +36,17 @@ Inside a container, `localhost` refers to the container itself, not the host mac
 - **Wrong:** `DB_HOST=localhost`
 
 This applies to all environment variables, configuration files, and code that references service hosts.
+
+## Video Module (Phase 03)
+
+Video upload, background processing, and delivery — implemented in `nestjs-project/src/videos/`, `storage/`, `queue/`, `core/`, and `worker/`.
+
+- **Entity:** `Video` (`videos` table) — lifecycle `status`: `rascunho` → `processando` → `pronto`/`erro`. Fields include `storage_key`, `thumbnail_key`, `duration_seconds`, `metadata` (jsonb), `upload_id`, `error_message`.
+- **Upload:** client-orchestrated presigned multipart upload (up to 10GB) — the API never receives the file bytes. `POST /videos` creates the draft and a multipart upload; `GET /videos/:id/upload-part-url` signs each part; `POST /videos/:id/complete-upload` finalizes the upload and enqueues processing.
+- **Storage:** MinIO (S3-compatible), via `StorageService` (`src/storage/storage.service.ts`) using `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` + `@aws-sdk/lib-storage`. Compose service `minio`.
+- **Queue:** BullMQ + Redis, via `QueueModule` (`src/queue/queue.module.ts`). Queue `video-processing`, job `process-video`, `attempts: 3` with exponential backoff. Compose service `redis`.
+- **Worker:** separate NestJS application context (no HTTP listener) — `src/worker/main.ts` + `WorkerModule`, sharing DB/config bootstrap with the API via `CoreModule` (`src/core/core.module.ts`) but never imported by `AppModule`, so it never competes with the API for the same queue. `VideoProcessor` (`src/videos/video.processor.ts`) reads the source video directly from a presigned GET URL (no full download) and uses `fluent-ffmpeg` to extract duration/metadata (`ffprobe`) and generate a thumbnail (`screenshots`). Run in dev with `npm run start:worker:dev` inside the `video-worker` container (idle by default, like `nestjs-api` — start explicitly, never automatically). Compose service `video-worker`.
+- **Delivery:** `GET /videos/:id/stream` and `GET /videos/:id/download` are `@Public()` and anonymous — no ownership check, only `status: pronto` is required. Both return a presigned GET URL (download adds a `response-content-disposition=attachment` override); S3/MinIO natively serves `Range`/`206 Partial Content` on that URL, so the API never proxies video bytes.
 
 ## Working Principles
 

@@ -529,21 +529,21 @@ SI-03.2 + SI-03.3 + SI-03.4
 
 ## Deliverables
 
-- [ ] SI-03.1 — Infra: MinIO, Redis e worker de vídeo no Compose
-- [ ] SI-03.2 — Migration + entidade Video
-- [ ] SI-03.3 — StorageService (cliente S3/MinIO)
-- [ ] SI-03.4 — QueueModule (BullMQ)
-- [ ] SI-03.5 — Endpoint POST /videos
-- [ ] SI-03.6 — Endpoint GET /videos/:id/upload-part-url
-- [ ] SI-03.7 — Endpoint POST /videos/:id/complete-upload
-- [ ] SI-03.8 — Endpoint GET /videos/:id
-- [ ] SI-03.9 — Worker de processamento de vídeo (FFmpeg)
-- [ ] SI-03.10 — Endpoint GET /videos/:id/stream
-- [ ] SI-03.11 — Endpoint GET /videos/:id/download
+- [x] SI-03.1 — Infra: MinIO, Redis e worker de vídeo no Compose
+- [x] SI-03.2 — Migration + entidade Video
+- [x] SI-03.3 — StorageService (cliente S3/MinIO)
+- [x] SI-03.4 — QueueModule (BullMQ)
+- [x] SI-03.5 — Endpoint POST /videos
+- [x] SI-03.6 — Endpoint GET /videos/:id/upload-part-url
+- [x] SI-03.7 — Endpoint POST /videos/:id/complete-upload
+- [x] SI-03.8 — Endpoint GET /videos/:id
+- [x] SI-03.9 — Worker de processamento de vídeo (FFmpeg)
+- [x] SI-03.10 — Endpoint GET /videos/:id/stream
+- [x] SI-03.11 — Endpoint GET /videos/:id/download
 
 **Full test suites:**
 
-- [ ] Testes unitários + integração passam (`docker compose exec nestjs-api npm test -- --runInBand`)
-- [ ] Testes E2E passam (`docker compose exec nestjs-api npm run test:e2e`)
-- [ ] Type-check passa (`docker compose exec nestjs-api npx tsc --noEmit`)
-- [ ] Lint passa (`docker compose exec nestjs-api npm run lint`)
+- [x] Testes unitários + integração passam (`docker compose exec nestjs-api npm test -- --runInBand`) — 190/190
+- [x] Testes E2E passam (`docker compose exec nestjs-api npm run test:e2e -- --runInBand`) — 72/72
+- [x] Type-check passa (`docker compose exec nestjs-api npx tsc --noEmit`)
+- [x] Lint passa nos arquivos desta fase (`docker compose exec nestjs-api npm run lint`) — 150 erros pré-existentes da Fase 02 seguem intocados por instrução explícita do usuário; 0 erros novos

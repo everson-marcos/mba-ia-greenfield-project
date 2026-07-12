@@ -73,6 +73,15 @@ npm run lint                             # ESLint with auto-fix
 npm run format                           # Prettier formatting
 ```
 
+### Video worker commands (prefix with `docker compose exec video-worker`, not `nestjs-api`)
+
+```bash
+npm run start:worker:dev                 # Worker entrypoint (src/worker/main.ts) with hot-reload
+npm run start:worker:prod                # Run compiled worker build
+```
+
+The `video-worker` service shares the same image as `nestjs-api` (`Dockerfile.dev`) but is a separate NestJS application context with no HTTP listener — it must never be started as part of "start the environment" either, same rule as `nestjs-api`'s dev server above.
+
 ### Host-only commands (Docker / connectivity probes)
 
 ```bash

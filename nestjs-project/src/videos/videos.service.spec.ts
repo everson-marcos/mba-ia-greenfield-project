@@ -12,6 +12,7 @@ import {
   UploadAlreadyCompletedException,
   VideoNotFoundException,
   VideoNotOwnedException,
+  VideoNotReadyException,
 } from './videos.exceptions';
 
 function makeChannel(id = 'channel-id'): Channel {
@@ -59,13 +60,17 @@ function makeChannelsService(): jest.Mocked<
 function makeStorageService(): jest.Mocked<
   Pick<
     StorageService,
-    'createMultipartUpload' | 'getUploadPartUrl' | 'completeMultipartUpload'
+    | 'createMultipartUpload'
+    | 'getUploadPartUrl'
+    | 'completeMultipartUpload'
+    | 'getPresignedGetUrl'
   >
 > {
   return {
     createMultipartUpload: jest.fn(),
     getUploadPartUrl: jest.fn(),
     completeMultipartUpload: jest.fn(),
+    getPresignedGetUrl: jest.fn(),
   };
 }
 
@@ -353,6 +358,105 @@ describe('VideosService', () => {
 
       await expect(service.findOne('user-id', 'video-id')).rejects.toThrow(
         VideoNotOwnedException,
+      );
+    });
+  });
+
+  describe('getStreamUrl', () => {
+    it('returns a presigned streaming url for a pronto video, anonymously', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(
+        makeVideo({ status: VideoStatus.PRONTO }),
+      );
+      const channelsService = makeChannelsService();
+      const storageService = makeStorageService();
+      storageService.getPresignedGetUrl.mockResolvedValue(
+        'https://signed-stream-url',
+      );
+      const service = buildService(repo, channelsService, storageService);
+
+      const result = await service.getStreamUrl('video-id');
+
+      expect(storageService.getPresignedGetUrl).toHaveBeenCalledWith(
+        'videos/video-id/original',
+      );
+      expect(result).toEqual({ url: 'https://signed-stream-url' });
+      expect(channelsService.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('throws VideoNotReadyException when the video is not pronto', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(
+        makeVideo({ status: VideoStatus.PROCESSANDO }),
+      );
+      const channelsService = makeChannelsService();
+      const storageService = makeStorageService();
+      const service = buildService(repo, channelsService, storageService);
+
+      await expect(service.getStreamUrl('video-id')).rejects.toThrow(
+        VideoNotReadyException,
+      );
+    });
+
+    it('throws VideoNotFoundException for a non-existent video', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(null);
+      const channelsService = makeChannelsService();
+      const storageService = makeStorageService();
+      const service = buildService(repo, channelsService, storageService);
+
+      await expect(service.getStreamUrl('missing-id')).rejects.toThrow(
+        VideoNotFoundException,
+      );
+    });
+  });
+
+  describe('getDownloadUrl', () => {
+    it('returns a presigned download url with an attachment disposition, anonymously', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(
+        makeVideo({ status: VideoStatus.PRONTO }),
+      );
+      const channelsService = makeChannelsService();
+      const storageService = makeStorageService();
+      storageService.getPresignedGetUrl.mockResolvedValue(
+        'https://signed-download-url',
+      );
+      const service = buildService(repo, channelsService, storageService);
+
+      const result = await service.getDownloadUrl('video-id');
+
+      expect(storageService.getPresignedGetUrl).toHaveBeenCalledWith(
+        'videos/video-id/original',
+        'attachment',
+      );
+      expect(result).toEqual({ url: 'https://signed-download-url' });
+      expect(channelsService.findByUserId).not.toHaveBeenCalled();
+    });
+
+    it('throws VideoNotReadyException when the video is not pronto', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(
+        makeVideo({ status: VideoStatus.PROCESSANDO }),
+      );
+      const channelsService = makeChannelsService();
+      const storageService = makeStorageService();
+      const service = buildService(repo, channelsService, storageService);
+
+      await expect(service.getDownloadUrl('video-id')).rejects.toThrow(
+        VideoNotReadyException,
+      );
+    });
+
+    it('throws VideoNotFoundException for a non-existent video', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(null);
+      const channelsService = makeChannelsService();
+      const storageService = makeStorageService();
+      const service = buildService(repo, channelsService, storageService);
+
+      await expect(service.getDownloadUrl('missing-id')).rejects.toThrow(
+        VideoNotFoundException,
       );
     });
   });

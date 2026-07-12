@@ -16,6 +16,7 @@ import {
 } from '@nestjs/swagger';
 import type { JwtPayload } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import { ApiErrorEnvelope } from '../common/openapi/api-error-envelope.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateVideoDto } from './dto/create-video.dto';
@@ -179,5 +180,57 @@ export class VideosController {
     @Param('id') id: string,
   ): Promise<VideoStatusResult> {
     return this.videosService.findOne(user.sub, id);
+  }
+
+  @Public()
+  @Get(':id/stream')
+  @ApiOperation({
+    summary: 'Get a presigned streaming URL for a video',
+    description:
+      "Returns a presigned GET URL for the video's original file, supporting Range/206 playback. Public for videos with status: pronto.",
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Presigned streaming URL',
+    schema: { properties: { url: { type: 'string' } } },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Video not found',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Video is not ready for playback yet',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async stream(@Param('id') id: string): Promise<{ url: string }> {
+    return this.videosService.getStreamUrl(id);
+  }
+
+  @Public()
+  @Get(':id/download')
+  @ApiOperation({
+    summary: 'Get a presigned download URL for a video',
+    description:
+      "Returns a presigned GET URL for the video's original file with a Content-Disposition: attachment override. Public for videos with status: pronto.",
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Presigned download URL',
+    schema: { properties: { url: { type: 'string' } } },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Video not found',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Video is not ready for playback yet',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async download(@Param('id') id: string): Promise<{ url: string }> {
+    return this.videosService.getDownloadUrl(id);
   }
 }

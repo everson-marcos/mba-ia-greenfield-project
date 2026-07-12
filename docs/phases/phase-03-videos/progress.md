@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
-**Status:** in_progress
-**SIs:** 9/11 completed
+**Status:** completed
+**SIs:** 11/11 completed
 
 ### SI-03.1 — Infra: MinIO, Redis e worker de vídeo no Compose
 - **Status:** completed
@@ -74,11 +74,24 @@
   - `onFailed` (`@OnWorkerEvent('failed')`) só marca `status: erro` quando `job.attemptsMade >= job.opts.attempts` (última tentativa) — nas tentativas intermediárias o vídeo permanece `processando`, deixando o retry do BullMQ agir livremente (per `phase-03-videos/TD-07`).
 
 ### SI-03.10 — Endpoint GET /videos/:id/stream
-- **Status:** pending
-- **Tests:** no tests
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 10 passing (3 unit + 3 integration + 4 e2e via spec `videos.plan.md`)
+- **Observations:**
+  - Ambiguidade real encontrada e resolvida com o usuário: o texto da Authorization Matrix ("dono pode acessar independente do status") exigiria um mecanismo de auth opcional que nenhuma TD especifica e nenhum AC testa — decidido (AskUserQuestion) implementar só o que os ACs cobrem: checagem 100% anônima de `status: pronto`, sem tentar identificar o requisitante. O bypass de dono para vídeos não-`pronto` fica **fora de escopo** desta fase.
+  - Nova exceção `VideoNotReadyException` (`VIDEO_NOT_READY`, 409).
+  - `VideosService.getStreamUrl`/`findReadyVideo` não recebem `userId` — rota `@Public()`, sem `@ApiBearerAuth`.
+  - Teste e2e do 206 confirma Range real contra o MinIO (upload via multipart real, mesma infra do Grupo 1, com `status` forçado para `pronto` via UPDATE direto, já que o worker de processamento não roda neste e2e).
 
 ### SI-03.11 — Endpoint GET /videos/:id/download
-- **Status:** pending
-- **Tests:** no tests
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 8 passing (3 unit + 2 e2e via spec `videos.plan.md`, mais os já existentes reexecutados)
+- **Observations:**
+  - Mesma regra da SI-03.10 (`findReadyVideo` compartilhado): rota `@Public()`, checagem 100% anônima de `status: pronto`, sem bypass de dono (mesma decisão do usuário na SI-03.10 aplicada aqui).
+  - `StorageService.getPresignedGetUrl(key, 'attachment')` — reaproveita o parâmetro `responseContentDisposition` já existente desde a SI-03.3, sem alteração no `StorageService`.
+  - E2E confirma `response-content-disposition=attachment` como query parameter real na URL assinada retornada pelo MinIO.
+
+**Full test suites (verificação final da fase):**
+- Testes unitários + integração: 190/190 passing (`docker compose exec nestjs-api npm test -- --runInBand`)
+- Testes E2E: 72/72 passing (`docker compose exec nestjs-api npm run test:e2e -- --runInBand`)
+- Type-check: `npx tsc --noEmit` limpo
+- Lint: 150 erros pré-existentes (débito da Fase 02, intocado por instrução explícita do usuário) — nenhum erro novo introduzido por qualquer SI desta fase

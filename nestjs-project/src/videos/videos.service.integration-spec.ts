@@ -21,6 +21,7 @@ import {
   UploadAlreadyCompletedException,
   VideoNotFoundException,
   VideoNotOwnedException,
+  VideoNotReadyException,
 } from './videos.exceptions';
 
 const ALL_ENTITIES = [User, Channel, RefreshToken, VerificationToken, Video];
@@ -291,6 +292,41 @@ describe('VideosService (integration)', () => {
           channel.user_id,
           '00000000-0000-0000-0000-000000000000',
         ),
+      ).rejects.toThrow(VideoNotFoundException);
+    });
+  });
+
+  describe('getStreamUrl', () => {
+    it('returns a real presigned streaming url for a pronto video', async () => {
+      const channel = await createUserWithChannel();
+      const created = await videosService.create(channel.user_id, {
+        title: 'Vídeo',
+        fileSize: 1024,
+      });
+      await videoRepository.update(created.id, {
+        status: VideoStatus.PRONTO,
+      });
+
+      const result = await videosService.getStreamUrl(created.id);
+
+      expect(result.url).toContain(`videos/${created.id}/original`);
+    });
+
+    it('throws VideoNotReadyException when the video is not pronto', async () => {
+      const channel = await createUserWithChannel();
+      const created = await videosService.create(channel.user_id, {
+        title: 'Vídeo',
+        fileSize: 1024,
+      });
+
+      await expect(videosService.getStreamUrl(created.id)).rejects.toThrow(
+        VideoNotReadyException,
+      );
+    });
+
+    it('throws VideoNotFoundException for a non-existent video', async () => {
+      await expect(
+        videosService.getStreamUrl('00000000-0000-0000-0000-000000000000'),
       ).rejects.toThrow(VideoNotFoundException);
     });
   });

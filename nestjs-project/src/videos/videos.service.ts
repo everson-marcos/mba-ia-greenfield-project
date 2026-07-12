@@ -21,6 +21,7 @@ import {
   UploadAlreadyCompletedException,
   VideoNotFoundException,
   VideoNotOwnedException,
+  VideoNotReadyException,
 } from './videos.exceptions';
 
 export interface CreateVideoResult {
@@ -142,6 +143,32 @@ export class VideosService {
       durationSeconds: video.duration_seconds,
       errorMessage: video.error_message,
     };
+  }
+
+  async getStreamUrl(videoId: string): Promise<{ url: string }> {
+    const video = await this.findReadyVideo(videoId);
+    const url = await this.storageService.getPresignedGetUrl(video.storage_key);
+    return { url };
+  }
+
+  async getDownloadUrl(videoId: string): Promise<{ url: string }> {
+    const video = await this.findReadyVideo(videoId);
+    const url = await this.storageService.getPresignedGetUrl(
+      video.storage_key,
+      'attachment',
+    );
+    return { url };
+  }
+
+  private async findReadyVideo(videoId: string): Promise<Video> {
+    const video = await this.videoRepository.findOneBy({ id: videoId });
+    if (!video) {
+      throw new VideoNotFoundException();
+    }
+    if (video.status !== VideoStatus.PRONTO) {
+      throw new VideoNotReadyException();
+    }
+    return video;
   }
 
   private async findOwnedVideo(

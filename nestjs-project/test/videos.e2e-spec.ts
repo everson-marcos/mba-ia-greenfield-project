@@ -399,4 +399,105 @@ describe('videos', () => {
       expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_FOUND');
     });
   });
+
+  async function createReadyVideo(accessToken: string): Promise<string> {
+    const video = await createVideo(accessToken, {
+      fileSize: 5 * 1024 * 1024,
+    });
+    const eTag = await uploadOnePart(accessToken, video.id);
+    await request(app.getHttpServer())
+      .post(`/videos/${video.id}/complete-upload`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ parts: [{ partNumber: 1, eTag }] })
+      .expect(200);
+    await dataSource.query('UPDATE "videos" SET status = $1 WHERE id = $2', [
+      'pronto',
+      video.id,
+    ]);
+    return video.id;
+  }
+
+  describe('GET /videos/:id/stream', () => {
+    it('retorna-url-publica-para-video-pronto', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'stream-owner@example.com',
+      );
+      const videoId = await createReadyVideo(access_token);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${videoId}/stream`)
+        .expect(200);
+
+      expect((res.body as { url: string }).url).toBeTruthy();
+    });
+
+    it('url-responde-range-com-206', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'stream-range@example.com',
+      );
+      const videoId = await createReadyVideo(access_token);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${videoId}/stream`)
+        .expect(200);
+      const { url } = res.body as { url: string };
+
+      const rangeResponse = await fetch(url, {
+        headers: { Range: 'bytes=0-99' },
+      });
+      expect(rangeResponse.status).toBe(206);
+      expect(rangeResponse.headers.get('content-range')).toBeTruthy();
+    });
+
+    it('rejeita-video-nao-pronto', async () => {
+      const owner = await registerConfirmAndLogin('stream-owner2@example.com');
+      const video = await createVideo(owner.access_token);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.id}/stream`)
+        .expect(409);
+
+      expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_READY');
+    });
+
+    it('retorna-404-para-video-inexistente', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/videos/00000000-0000-0000-0000-000000000000/stream')
+        .expect(404);
+
+      expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_FOUND');
+    });
+  });
+
+  describe('GET /videos/:id/download', () => {
+    it('retorna-url-de-download-publica', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'download-owner@example.com',
+      );
+      const videoId = await createReadyVideo(access_token);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${videoId}/download`)
+        .expect(200);
+
+      const { url } = res.body as { url: string };
+      expect(url).toBeTruthy();
+      expect(
+        new URL(url).searchParams.get('response-content-disposition'),
+      ).toBe('attachment');
+    });
+
+    it('rejeita-video-nao-pronto', async () => {
+      const owner = await registerConfirmAndLogin(
+        'download-owner2@example.com',
+      );
+      const video = await createVideo(owner.access_token);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.id}/download`)
+        .expect(409);
+
+      expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_READY');
+    });
+  });
 });
