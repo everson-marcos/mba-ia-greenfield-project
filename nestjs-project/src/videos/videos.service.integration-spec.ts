@@ -1,6 +1,7 @@
 import { DataSource, Repository } from 'typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
+import { Queue } from 'bullmq';
 import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { VerificationToken } from '../auth/entities/verification-token.entity';
 import { Channel } from '../channels/entities/channel.entity';
@@ -13,8 +14,14 @@ import {
 } from '../test/create-test-data-source';
 import { User } from '../users/entities/user.entity';
 import { Video, VideoStatus } from './entities/video.entity';
+import { VIDEO_PROCESSING_QUEUE } from './videos.constants';
 import { VideosService } from './videos.service';
-import { FileTooLargeException } from './videos.exceptions';
+import {
+  FileTooLargeException,
+  UploadAlreadyCompletedException,
+  VideoNotFoundException,
+  VideoNotOwnedException,
+} from './videos.exceptions';
 
 const ALL_ENTITIES = [User, Channel, RefreshToken, VerificationToken, Video];
 
@@ -25,6 +32,8 @@ describe('VideosService (integration)', () => {
   let videoRepository: Repository<Video>;
   let videosService: VideosService;
   let channelsService: ChannelsService;
+  let storageService: StorageService;
+  let queue: Queue;
 
   beforeAll(async () => {
     dataSource = createTestDataSource(ALL_ENTITIES);
@@ -40,16 +49,25 @@ describe('VideosService (integration)', () => {
       ],
       providers: [StorageService],
     }).compile();
-    const storageService = moduleRef.get(StorageService);
+    storageService = moduleRef.get(StorageService);
+
+    queue = new Queue(VIDEO_PROCESSING_QUEUE, {
+      connection: {
+        host: process.env.REDIS_HOST ?? 'redis',
+        port: Number(process.env.REDIS_PORT ?? 6379),
+      },
+    });
 
     videosService = new VideosService(
       videoRepository,
       channelsService,
       storageService,
+      queue,
     );
   });
 
   afterAll(async () => {
+    await queue.close();
     await dataSource.destroy();
   });
 
@@ -105,5 +123,131 @@ describe('VideosService (integration)', () => {
 
     const videos = await videoRepository.find();
     expect(videos).toHaveLength(0);
+  });
+
+  describe('getUploadPartUrl', () => {
+    it('returns a real presigned url for the owner of a rascunho video', async () => {
+      const channel = await createUserWithChannel();
+      const created = await videosService.create(channel.user_id, {
+        title: 'Vídeo',
+        fileSize: 1024,
+      });
+
+      const result = await videosService.getUploadPartUrl(
+        channel.user_id,
+        created.id,
+        1,
+      );
+
+      expect(result.url).toContain(`videos/${created.id}/original`);
+    });
+
+    it('throws VideoNotFoundException for a non-existent video', async () => {
+      const channel = await createUserWithChannel();
+
+      await expect(
+        videosService.getUploadPartUrl(
+          channel.user_id,
+          '00000000-0000-0000-0000-000000000000',
+          1,
+        ),
+      ).rejects.toThrow(VideoNotFoundException);
+    });
+
+    it('throws VideoNotOwnedException when a different user requests it', async () => {
+      const ownerChannel = await createUserWithChannel();
+      const otherChannel = await createUserWithChannel();
+      const created = await videosService.create(ownerChannel.user_id, {
+        title: 'Vídeo',
+        fileSize: 1024,
+      });
+
+      await expect(
+        videosService.getUploadPartUrl(otherChannel.user_id, created.id, 1),
+      ).rejects.toThrow(VideoNotOwnedException);
+    });
+
+    it('throws UploadAlreadyCompletedException when the video is not rascunho', async () => {
+      const channel = await createUserWithChannel();
+      const created = await videosService.create(channel.user_id, {
+        title: 'Vídeo',
+        fileSize: 1024,
+      });
+      await videoRepository.update(created.id, {
+        status: VideoStatus.PROCESSANDO,
+      });
+
+      await expect(
+        videosService.getUploadPartUrl(channel.user_id, created.id, 1),
+      ).rejects.toThrow(UploadAlreadyCompletedException);
+    });
+  });
+
+  describe('completeUpload', () => {
+    it('completes a real multipart upload, marks processando, and enqueues a real job', async () => {
+      const channel = await createUserWithChannel();
+      const created = await videosService.create(channel.user_id, {
+        title: 'Vídeo',
+        fileSize: 5 * 1024 * 1024,
+      });
+
+      const partUrl = await videosService.getUploadPartUrl(
+        channel.user_id,
+        created.id,
+        1,
+      );
+      const partBody = Buffer.alloc(5 * 1024 * 1024, 'a');
+      const putResponse = await fetch(partUrl.url, {
+        method: 'PUT',
+        body: partBody,
+      });
+      const eTag = putResponse.headers.get('etag') as string;
+
+      const result = await videosService.completeUpload(
+        channel.user_id,
+        created.id,
+        [{ partNumber: 1, eTag }],
+      );
+
+      expect(result.status).toBe(VideoStatus.PROCESSANDO);
+
+      const persisted = await videoRepository.findOneBy({ id: created.id });
+      expect(persisted?.status).toBe(VideoStatus.PROCESSANDO);
+
+      const jobs = await queue.getJobs(['waiting', 'completed']);
+      expect(
+        jobs.some(
+          (job) => (job.data as { videoId: string }).videoId === created.id,
+        ),
+      ).toBe(true);
+    });
+
+    it('throws UploadAlreadyCompletedException on a second completion attempt', async () => {
+      const channel = await createUserWithChannel();
+      const created = await videosService.create(channel.user_id, {
+        title: 'Vídeo',
+        fileSize: 5 * 1024 * 1024,
+      });
+      const partUrl = await videosService.getUploadPartUrl(
+        channel.user_id,
+        created.id,
+        1,
+      );
+      const partBody = Buffer.alloc(5 * 1024 * 1024, 'a');
+      const putResponse = await fetch(partUrl.url, {
+        method: 'PUT',
+        body: partBody,
+      });
+      const eTag = putResponse.headers.get('etag') as string;
+      await videosService.completeUpload(channel.user_id, created.id, [
+        { partNumber: 1, eTag },
+      ]);
+
+      await expect(
+        videosService.completeUpload(channel.user_id, created.id, [
+          { partNumber: 1, eTag },
+        ]),
+      ).rejects.toThrow(UploadAlreadyCompletedException);
+    });
   });
 });

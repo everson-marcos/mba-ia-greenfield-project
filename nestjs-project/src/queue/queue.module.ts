@@ -4,6 +4,16 @@ import { ConfigModule, ConfigType } from '@nestjs/config';
 import queueConfig from '../config/queue.config';
 import { VIDEO_PROCESSING_QUEUE } from '../videos/videos.constants';
 
+const videoProcessingQueue = BullModule.registerQueueAsync({
+  name: VIDEO_PROCESSING_QUEUE,
+  useFactory: () => ({
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+    },
+  }),
+});
+
 @Module({
   imports: [
     BullModule.forRootAsync({
@@ -16,16 +26,8 @@ import { VIDEO_PROCESSING_QUEUE } from '../videos/videos.constants';
         },
       }),
     }),
-    BullModule.registerQueueAsync({
-      name: VIDEO_PROCESSING_QUEUE,
-      useFactory: () => ({
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-        },
-      }),
-    }),
+    videoProcessingQueue,
   ],
-  exports: [BullModule],
+  exports: [videoProcessingQueue],
 })
 export class QueueModule {}

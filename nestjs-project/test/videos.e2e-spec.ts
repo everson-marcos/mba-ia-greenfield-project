@@ -111,6 +111,35 @@ describe('videos', () => {
     };
   }
 
+  async function createVideo(
+    accessToken: string,
+    overrides: { title?: string; fileSize?: number } = {},
+  ): Promise<CreateVideoBody> {
+    const res = await request(app.getHttpServer())
+      .post('/videos')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        title: overrides.title ?? 'Vídeo de teste',
+        fileSize: overrides.fileSize ?? 1048576,
+      });
+    return res.body as CreateVideoBody;
+  }
+
+  async function uploadOnePart(
+    accessToken: string,
+    videoId: string,
+  ): Promise<string> {
+    const res = await request(app.getHttpServer())
+      .get(`/videos/${videoId}/upload-part-url`)
+      .query({ partNumber: 1 })
+      .set('Authorization', `Bearer ${accessToken}`);
+    const { url } = res.body as { url: string };
+
+    const partBody = Buffer.alloc(5 * 1024 * 1024, 'a');
+    const putResponse = await fetch(url, { method: 'PUT', body: partBody });
+    return putResponse.headers.get('etag') as string;
+  }
+
   describe('POST /videos', () => {
     it('cria-video-com-payload-valido', async () => {
       const { access_token } = await registerConfirmAndLogin(
@@ -160,6 +189,163 @@ describe('videos', () => {
 
       const body = res.body as ApiErrorBody;
       expect(body.error).toBe('FILE_TOO_LARGE');
+    });
+  });
+
+  describe('GET /videos/:id/upload-part-url', () => {
+    it('retorna-url-para-dono', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'part-url-owner@example.com',
+      );
+      const video = await createVideo(access_token);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.id}/upload-part-url`)
+        .query({ partNumber: 1 })
+        .set('Authorization', `Bearer ${access_token}`)
+        .expect(200);
+
+      expect((res.body as { url: string }).url).toBeTruthy();
+    });
+
+    it('rejeita-nao-dono', async () => {
+      const owner = await registerConfirmAndLogin(
+        'part-url-owner2@example.com',
+      );
+      const other = await registerConfirmAndLogin(
+        'part-url-intruder@example.com',
+      );
+      const video = await createVideo(owner.access_token);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.id}/upload-part-url`)
+        .query({ partNumber: 1 })
+        .set('Authorization', `Bearer ${other.access_token}`)
+        .expect(403);
+
+      expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_OWNED');
+    });
+
+    it('retorna-404-para-video-inexistente', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'part-url-missing@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .get('/videos/00000000-0000-0000-0000-000000000000/upload-part-url')
+        .query({ partNumber: 1 })
+        .set('Authorization', `Bearer ${access_token}`)
+        .expect(404);
+
+      expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_FOUND');
+    });
+
+    it('rejeita-upload-ja-completado', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'part-url-completed@example.com',
+      );
+      const video = await createVideo(access_token);
+      await dataSource.query('UPDATE "videos" SET status = $1 WHERE id = $2', [
+        'processando',
+        video.id,
+      ]);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.id}/upload-part-url`)
+        .query({ partNumber: 1 })
+        .set('Authorization', `Bearer ${access_token}`)
+        .expect(409);
+
+      expect((res.body as ApiErrorBody).error).toBe('UPLOAD_ALREADY_COMPLETED');
+    });
+  });
+
+  describe('POST /videos/:id/complete-upload', () => {
+    it('completa-upload-e-enfileira-job', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'complete-owner@example.com',
+      );
+      const video = await createVideo(access_token, {
+        fileSize: 5 * 1024 * 1024,
+      });
+      const eTag = await uploadOnePart(access_token, video.id);
+
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${video.id}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({ parts: [{ partNumber: 1, eTag }] })
+        .expect(200);
+
+      expect((res.body as { id: string; status: string }).status).toBe(
+        'processando',
+      );
+
+      const rows = await dataSource.query<{ status: string }[]>(
+        'SELECT status FROM "videos" WHERE id = $1',
+        [video.id],
+      );
+      expect(rows[0].status).toBe('processando');
+    });
+
+    it('rejeita-etag-invalido', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'complete-bad-etag@example.com',
+      );
+      const video = await createVideo(access_token, {
+        fileSize: 5 * 1024 * 1024,
+      });
+
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${video.id}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({ parts: [{ partNumber: 1, eTag: '"forged-etag"' }] })
+        .expect(400);
+
+      expect((res.body as ApiErrorBody).error).toBe('INVALID_UPLOAD_PART');
+    });
+
+    it('rejeita-nao-dono', async () => {
+      const owner = await registerConfirmAndLogin(
+        'complete-owner2@example.com',
+      );
+      const other = await registerConfirmAndLogin(
+        'complete-intruder@example.com',
+      );
+      const video = await createVideo(owner.access_token, {
+        fileSize: 5 * 1024 * 1024,
+      });
+      const eTag = await uploadOnePart(owner.access_token, video.id);
+
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${video.id}/complete-upload`)
+        .set('Authorization', `Bearer ${other.access_token}`)
+        .send({ parts: [{ partNumber: 1, eTag }] })
+        .expect(403);
+
+      expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_OWNED');
+    });
+
+    it('rejeita-upload-ja-completado', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'complete-twice@example.com',
+      );
+      const video = await createVideo(access_token, {
+        fileSize: 5 * 1024 * 1024,
+      });
+      const eTag = await uploadOnePart(access_token, video.id);
+      await request(app.getHttpServer())
+        .post(`/videos/${video.id}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({ parts: [{ partNumber: 1, eTag }] })
+        .expect(200);
+
+      const res = await request(app.getHttpServer())
+        .post(`/videos/${video.id}/complete-upload`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .send({ parts: [{ partNumber: 1, eTag }] })
+        .expect(409);
+
+      expect((res.body as ApiErrorBody).error).toBe('UPLOAD_ALREADY_COMPLETED');
     });
   });
 });

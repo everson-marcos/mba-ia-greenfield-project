@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 5/11 completed
+**SIs:** 7/11 completed
 
 ### SI-03.1 — Infra: MinIO, Redis e worker de vídeo no Compose
 - **Status:** completed
@@ -42,14 +42,19 @@
   - `storage_key` usa apenas `videos/{id}/original` (sem extensão de arquivo) — o DTO de criação não carrega nome/mime-type do arquivo original, e a extensão não é necessária para o funcionamento do storage.
 
 ### SI-03.6 — Endpoint GET /videos/:id/upload-part-url
-- **Status:** pending
-- **Tests:** no tests
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 12 passing (4 unit + 4 integration + 4 e2e, mesmo spec `videos.plan.md`)
+- **Observations:**
+  - Introduzida `findOwnedVideo` (helper privado em `VideosService`) reutilizável pelas próximas SIs de endpoint que exigem ownership.
+  - Validação de `partNumber` via DTO (`UploadPartUrlQueryDto` com `class-transformer` + `class-validator`), consistente com a convenção do projeto de DTO+ValidationPipe em vez de pipes nativos do Nest.
 
 ### SI-03.7 — Endpoint POST /videos/:id/complete-upload
-- **Status:** pending
-- **Tests:** no tests
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 31 passing (unit+integração 19 + queue.module.spec 1 + e2e 11)
+- **Observations:**
+  - Bug real pego pelo E2E: `@Post()` do Nest usa 201 por padrão; o contrato documentado (Tech Spec) exige 200 já que o endpoint transiciona estado de um recurso existente, não cria um novo. Corrigido com `@HttpCode(200)`.
+  - `QueueModule` precisou reexportar o resultado exato de `BullModule.registerQueueAsync(...)` (guardado em variável, não `exports: [BullModule]` genérico) para que o provider da fila fique disponível via DI em `VideosModule`.
+  - Classificação do erro do storage: `err.name === 'InvalidPart'` mapeia para `400 INVALID_UPLOAD_PART`; qualquer outro erro do storage vira `502 MULTIPART_UPLOAD_FAILED`.
 
 ### SI-03.8 — Endpoint GET /videos/:id
 - **Status:** pending
