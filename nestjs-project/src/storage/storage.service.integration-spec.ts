@@ -88,4 +88,18 @@ describe('StorageService (integration)', () => {
 
     await rawClient.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   });
+
+  it('should upload a whole file directly via uploadFile', async () => {
+    const key = `test/${crypto.randomUUID()}.jpg`;
+    const body = Buffer.from('fake thumbnail bytes');
+
+    await service.uploadFile(key, body);
+
+    const url = await service.getPresignedGetUrl(key);
+    const response = await fetch(url);
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(body);
+
+    await rawClient.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+  });
 });

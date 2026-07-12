@@ -301,4 +301,59 @@ describe('VideosService', () => {
       ).rejects.toThrow(MultipartUploadFailedException);
     });
   });
+
+  describe('findOne', () => {
+    it('returns the video status and metadata for the owner', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(
+        makeVideo({
+          title: 'Meu vídeo',
+          status: VideoStatus.PRONTO,
+          duration_seconds: 12.5,
+          error_message: null,
+        }),
+      );
+      const channelsService = makeChannelsService();
+      channelsService.findByUserId.mockResolvedValue(makeChannel());
+      const storageService = makeStorageService();
+      const service = buildService(repo, channelsService, storageService);
+
+      const result = await service.findOne('user-id', 'video-id');
+
+      expect(result).toEqual({
+        id: 'video-id',
+        title: 'Meu vídeo',
+        status: VideoStatus.PRONTO,
+        durationSeconds: 12.5,
+        errorMessage: null,
+      });
+    });
+
+    it('throws VideoNotFoundException for a non-existent video', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(null);
+      const channelsService = makeChannelsService();
+      const storageService = makeStorageService();
+      const service = buildService(repo, channelsService, storageService);
+
+      await expect(service.findOne('user-id', 'missing-id')).rejects.toThrow(
+        VideoNotFoundException,
+      );
+    });
+
+    it('throws VideoNotOwnedException for a different user', async () => {
+      const repo = makeRepo();
+      repo.findOneBy.mockResolvedValue(makeVideo());
+      const channelsService = makeChannelsService();
+      channelsService.findByUserId.mockResolvedValue(
+        makeChannel('other-channel-id'),
+      );
+      const storageService = makeStorageService();
+      const service = buildService(repo, channelsService, storageService);
+
+      await expect(service.findOne('user-id', 'video-id')).rejects.toThrow(
+        VideoNotOwnedException,
+      );
+    });
+  });
 });

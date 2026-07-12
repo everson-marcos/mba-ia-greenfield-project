@@ -32,13 +32,26 @@ describe('Database migrations (integration)', () => {
 
     await dataSource.initialize();
 
+    // "videos" isn't a MANAGED_TABLE here (its migration isn't under test), but
+    // CASCADE-dropping "channels" silently drops the FK constraint on
+    // videos.channel_id without dropping the table. Any leftover row would
+    // then make a later suite's `synchronize: true` fail when it tries to
+    // re-add that constraint — clear the data first so that can never happen.
+    await dataSource.query(`DELETE FROM "videos"`);
+
     await Promise.all([
       ...MANAGED_TABLES.map((table) =>
         dataSource.query(`DROP TABLE IF EXISTS "${table}" CASCADE`),
       ),
       dataSource.query(`DROP TABLE IF EXISTS "migrations" CASCADE`),
-      dataSource.query(`DROP TYPE IF EXISTS "verification_tokens_type_enum"`),
     ]);
+    // Must run after the table drops above: "verification_tokens" CASCADE
+    // only releases the enum's last dependent once that DROP TABLE completes,
+    // so dropping the type concurrently in the same Promise.all races and
+    // intermittently fails with "other objects depend on it".
+    await dataSource.query(
+      `DROP TYPE IF EXISTS "verification_tokens_type_enum"`,
+    );
   });
 
   afterAll(async () => {

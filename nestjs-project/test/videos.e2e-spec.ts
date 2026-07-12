@@ -348,4 +348,55 @@ describe('videos', () => {
       expect((res.body as ApiErrorBody).error).toBe('UPLOAD_ALREADY_COMPLETED');
     });
   });
+
+  describe('GET /videos/:id', () => {
+    it('retorna-status-para-dono', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'status-owner@example.com',
+      );
+      const video = await createVideo(access_token, { title: 'Meu vídeo' });
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.id}`)
+        .set('Authorization', `Bearer ${access_token}`)
+        .expect(200);
+
+      const body = res.body as {
+        id: string;
+        title: string;
+        status: string;
+      };
+      expect(body.id).toBe(video.id);
+      expect(body.title).toBe('Meu vídeo');
+      expect(body.status).toBe('rascunho');
+    });
+
+    it('rejeita-nao-dono', async () => {
+      const owner = await registerConfirmAndLogin('status-owner2@example.com');
+      const other = await registerConfirmAndLogin(
+        'status-intruder@example.com',
+      );
+      const video = await createVideo(owner.access_token);
+
+      const res = await request(app.getHttpServer())
+        .get(`/videos/${video.id}`)
+        .set('Authorization', `Bearer ${other.access_token}`)
+        .expect(403);
+
+      expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_OWNED');
+    });
+
+    it('retorna-404-para-video-inexistente', async () => {
+      const { access_token } = await registerConfirmAndLogin(
+        'status-missing@example.com',
+      );
+
+      const res = await request(app.getHttpServer())
+        .get('/videos/00000000-0000-0000-0000-000000000000')
+        .set('Authorization', `Bearer ${access_token}`)
+        .expect(404);
+
+      expect((res.body as ApiErrorBody).error).toBe('VIDEO_NOT_FOUND');
+    });
+  });
 });

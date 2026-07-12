@@ -21,7 +21,7 @@ import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { UploadPartUrlQueryDto } from './dto/upload-part-url-query.dto';
 import { VideoStatus } from './entities/video.entity';
-import { VideosService } from './videos.service';
+import { VideosService, VideoStatusResult } from './videos.service';
 
 @ApiTags('videos')
 @Controller('videos')
@@ -142,5 +142,42 @@ export class VideosController {
     @Body() dto: CompleteUploadDto,
   ): Promise<{ id: string; status: VideoStatus }> {
     return this.videosService.completeUpload(user.sub, id, dto.parts);
+  }
+
+  @Get(':id')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Get the current status and metadata of a video',
+    description:
+      'Returns the video processing lifecycle status (rascunho → processando → pronto/erro) for the owner.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Video status and metadata',
+    schema: {
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        title: { type: 'string' },
+        status: { type: 'string' },
+        durationSeconds: { type: 'number', nullable: true },
+        errorMessage: { type: 'string', nullable: true },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Requester does not own this video',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Video not found',
+    schema: { $ref: getSchemaPath(ApiErrorEnvelope) },
+  })
+  async findOne(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+  ): Promise<VideoStatusResult> {
+    return this.videosService.findOne(user.sub, id);
   }
 }

@@ -250,4 +250,48 @@ describe('VideosService (integration)', () => {
       ).rejects.toThrow(UploadAlreadyCompletedException);
     });
   });
+
+  describe('findOne', () => {
+    it('returns status and metadata for the owner', async () => {
+      const channel = await createUserWithChannel();
+      const created = await videosService.create(channel.user_id, {
+        title: 'Meu vídeo',
+        fileSize: 1024,
+      });
+
+      const result = await videosService.findOne(channel.user_id, created.id);
+
+      expect(result).toEqual({
+        id: created.id,
+        title: 'Meu vídeo',
+        status: VideoStatus.RASCUNHO,
+        durationSeconds: null,
+        errorMessage: null,
+      });
+    });
+
+    it('throws VideoNotOwnedException for a different user', async () => {
+      const ownerChannel = await createUserWithChannel();
+      const otherChannel = await createUserWithChannel();
+      const created = await videosService.create(ownerChannel.user_id, {
+        title: 'Vídeo',
+        fileSize: 1024,
+      });
+
+      await expect(
+        videosService.findOne(otherChannel.user_id, created.id),
+      ).rejects.toThrow(VideoNotOwnedException);
+    });
+
+    it('throws VideoNotFoundException for a non-existent video', async () => {
+      const channel = await createUserWithChannel();
+
+      await expect(
+        videosService.findOne(
+          channel.user_id,
+          '00000000-0000-0000-0000-000000000000',
+        ),
+      ).rejects.toThrow(VideoNotFoundException);
+    });
+  });
 });

@@ -5,6 +5,7 @@ import {
   S3Client,
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Inject, Injectable } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
@@ -83,6 +84,14 @@ export class StorageService {
         },
       }),
     );
+  }
+
+  async uploadFile(key: string, body: Buffer): Promise<void> {
+    const upload = new Upload({
+      client: this.client,
+      params: { Bucket: this.bucket, Key: key, Body: body },
+    });
+    await upload.done();
   }
 
   async getPresignedGetUrl(

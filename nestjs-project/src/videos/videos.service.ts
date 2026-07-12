@@ -29,6 +29,14 @@ export interface CreateVideoResult {
   partSize: number;
 }
 
+export interface VideoStatusResult {
+  id: string;
+  title: string;
+  status: VideoStatus;
+  durationSeconds: number | null;
+  errorMessage: string | null;
+}
+
 @Injectable()
 export class VideosService {
   constructor(
@@ -123,6 +131,17 @@ export class VideosService {
     await this.videoQueue.add(PROCESS_VIDEO_JOB, { videoId: video.id });
 
     return { id: video.id, status: VideoStatus.PROCESSANDO };
+  }
+
+  async findOne(userId: string, videoId: string): Promise<VideoStatusResult> {
+    const video = await this.findOwnedVideo(userId, videoId);
+    return {
+      id: video.id,
+      title: video.title,
+      status: video.status,
+      durationSeconds: video.duration_seconds,
+      errorMessage: video.error_message,
+    };
   }
 
   private async findOwnedVideo(

@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 7/11 completed
+**SIs:** 9/11 completed
 
 ### SI-03.1 — Infra: MinIO, Redis e worker de vídeo no Compose
 - **Status:** completed
@@ -57,14 +57,21 @@
   - Classificação do erro do storage: `err.name === 'InvalidPart'` mapeia para `400 INVALID_UPLOAD_PART`; qualquer outro erro do storage vira `502 MULTIPART_UPLOAD_FAILED`.
 
 ### SI-03.8 — Endpoint GET /videos/:id
-- **Status:** pending
-- **Tests:** no tests
+- **Status:** completed
+- **Tests:** 39 passing
 - **Observations:** none
 
 ### SI-03.9 — Worker de processamento de vídeo (FFmpeg)
-- **Status:** pending
-- **Tests:** no tests
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 2 passing (integration, real Redis + BullMQ + FFmpeg + MinIO)
+- **Observations:**
+  - Extraído `CoreModule` (ConfigModule + TypeOrmModule.forRootAsync) para ser compartilhado entre `AppModule` e o novo `WorkerModule`, evitando duplicar o bootstrap entre os dois entrypoints (per `phase-03-videos/TD-05`).
+  - `WorkerModule` é um NestJS application context separado (`src/worker/main.ts`, sem HTTP listener) que NÃO é importado por `AppModule` — evita que a API rode um segundo worker BullMQ concorrente consumindo a mesma fila.
+  - `VideoProcessor` lê o vídeo direto da URL pré-assinada de GET (via `StorageService.getPresignedGetUrl`) para `ffprobe`/`screenshots`, em vez de baixar o arquivo inteiro para disco — evita materializar até 10GB no worker e aproveita o suporte a Range do S3/MinIO.
+  - Bug real (mesma classe do já visto em SI-03.2): `WorkerModule` precisou registrar `Channel` e `User` em `TypeOrmModule.forFeature`, além de `Video` — sem eles, o TypeORM falha ao montar os metadados da relação `Video.channel` → `Channel.user` (erro "Entity metadata for X was not found"), já que o DataSource do worker é uma aplicação Nest separada da API e não herda registros de outros módulos.
+  - Bug real pré-existente, exposto por este SI: `migrations.integration-spec.ts` faz `DROP TABLE "channels" ... CASCADE`, o que remove silenciosamente a FK `videos.channel_id → channels.id` sem apagar a tabela `videos` — linhas órfãs deixadas por qualquer suíte anterior quebravam o `synchronize: true` de qualquer outra suíte de integração que inclua `Video` (erro de violação de FK ao tentar recriar a constraint). Corrigido limpando `videos` no `beforeAll` desse teste.
+  - Bug real pré-existente (regressão do fix anterior do enum): o `DROP TYPE IF EXISTS "verification_tokens_type_enum"` estava no mesmo `Promise.all` do `DROP TABLE "verification_tokens" CASCADE` — como ambos disparam concorrentemente sem ordem garantida, o DROP TYPE às vezes executa antes do DROP TABLE terminar, falhando com "other objects depend on it". Corrigido movendo o DROP TYPE para depois do `Promise.all` dos DROP TABLE.
+  - `onFailed` (`@OnWorkerEvent('failed')`) só marca `status: erro` quando `job.attemptsMade >= job.opts.attempts` (última tentativa) — nas tentativas intermediárias o vídeo permanece `processando`, deixando o retry do BullMQ agir livremente (per `phase-03-videos/TD-07`).
 
 ### SI-03.10 — Endpoint GET /videos/:id/stream
 - **Status:** pending
