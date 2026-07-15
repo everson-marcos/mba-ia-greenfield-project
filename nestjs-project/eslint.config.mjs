@@ -32,4 +32,12 @@ export default tseslint.config(
       "prettier/prettier": ["error", { endOfLine: "auto" }],
     },
   },
+  {
+    files: ['**/*.spec.ts', '**/*.integration-spec.ts', '**/*.e2e-spec.ts'],
+    rules: {
+      // jest.Mocked<Repository<T>> references (e.g. `expect(repo.save).toHaveBeenCalledWith(...)`)
+      // are the idiomatic jest assertion pattern, not an unbound-`this` hazard — false positive here.
+      '@typescript-eslint/unbound-method': 'off',
+    },
+  },
 );
