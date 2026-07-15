@@ -95,3 +95,9 @@
 - Testes E2E: 72/72 passing (`docker compose exec nestjs-api npm run test:e2e -- --runInBand`)
 - Type-check: `npx tsc --noEmit` limpo
 - Lint: 150 erros pré-existentes (débito da Fase 02, intocado por instrução explícita do usuário) — nenhum erro novo introduzido por qualquer SI desta fase
+
+**Fix pós-review — criação do bucket MinIO ausente em 2 specs:**
+- Feedback externo apontou que `videos.service.integration-spec.ts` quebrava com `NoSuchBucket` ao subir a stack do zero, porque não garantia a criação do bucket no `beforeAll` (diferente de `storage.service.integration-spec.ts` e `video.processor.integration-spec.ts`, que já faziam isso). A suíte só fechava verde antes por depender da ordem de execução (o bucket já existir por efeito colateral de outra suíte).
+- Investigação encontrou o mesmo problema em `test/videos.e2e-spec.ts` (15/20 testes falhando a partir de um bucket vazio).
+- Corrigido replicando o padrão já estabelecido (`HeadBucketCommand`/`CreateBucketCommand` no `beforeAll`) nos dois arquivos. Validado removendo o bucket manualmente (`mc rb --force local/streamtube`) e reexecutando cada suíte isolada antes e depois da correção — confirmado failing→passing nas duas.
+- Suíte completa reconfirmada verde a partir de um bucket vazio: 190/190 unit+integration, 72/72 e2e, `tsc --noEmit` limpo.

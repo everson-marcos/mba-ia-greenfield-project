@@ -1,3 +1,8 @@
+import {
+  CreateBucketCommand,
+  HeadBucketCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { DataSource, Repository } from 'typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -25,6 +30,7 @@ import {
 } from './videos.exceptions';
 
 const ALL_ENTITIES = [User, Channel, RefreshToken, VerificationToken, Video];
+const bucket = process.env.STORAGE_BUCKET ?? 'streamtube';
 
 describe('VideosService (integration)', () => {
   let dataSource: DataSource;
@@ -51,6 +57,21 @@ describe('VideosService (integration)', () => {
       providers: [StorageService],
     }).compile();
     storageService = moduleRef.get(StorageService);
+
+    const s3Client = new S3Client({
+      endpoint: process.env.STORAGE_ENDPOINT ?? 'http://minio:9000',
+      forcePathStyle: true,
+      region: 'us-east-1',
+      credentials: {
+        accessKeyId: process.env.STORAGE_ACCESS_KEY ?? 'minioadmin',
+        secretAccessKey: process.env.STORAGE_SECRET_KEY ?? 'minioadmin',
+      },
+    });
+    try {
+      await s3Client.send(new HeadBucketCommand({ Bucket: bucket }));
+    } catch {
+      await s3Client.send(new CreateBucketCommand({ Bucket: bucket }));
+    }
 
     queue = new Queue(VIDEO_PROCESSING_QUEUE, {
       connection: {

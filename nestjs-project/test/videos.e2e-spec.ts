@@ -1,3 +1,8 @@
+import {
+  CreateBucketCommand,
+  HeadBucketCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -9,6 +14,8 @@ import { AuthService } from '../src/auth/auth.service';
 import { DomainExceptionFilter } from '../src/common/filters/domain-exception.filter';
 import { ValidationExceptionFilter } from '../src/common/filters/validation-exception.filter';
 import { cleanAllTables } from '../src/test/create-test-data-source';
+
+const bucket = process.env.STORAGE_BUCKET ?? 'streamtube';
 
 interface AuthTokensBody {
   access_token: string;
@@ -62,6 +69,21 @@ describe('videos', () => {
     dataSource = moduleFixture.get(DataSource);
     throttlerStorage =
       moduleFixture.get<ThrottlerStorageService>(ThrottlerStorage);
+
+    const s3Client = new S3Client({
+      endpoint: process.env.STORAGE_ENDPOINT ?? 'http://minio:9000',
+      forcePathStyle: true,
+      region: 'us-east-1',
+      credentials: {
+        accessKeyId: process.env.STORAGE_ACCESS_KEY ?? 'minioadmin',
+        secretAccessKey: process.env.STORAGE_SECRET_KEY ?? 'minioadmin',
+      },
+    });
+    try {
+      await s3Client.send(new HeadBucketCommand({ Bucket: bucket }));
+    } catch {
+      await s3Client.send(new CreateBucketCommand({ Bucket: bucket }));
+    }
   });
 
   afterAll(async () => {
